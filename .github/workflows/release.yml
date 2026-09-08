@@ -128,7 +128,14 @@ jobs:
           $sums  = (Get-Content checksums.txt -Raw).TrimEnd()
           $notes = (Get-Content packaging\release-notes.md -Raw) -replace '<!--CHECKSUMS-->', $sums
           $notes | Out-File -FilePath notes.md -Encoding utf8
-          gh release create "v${{ steps.v.outputs.version }}" `
-            MediaPorter-*-setup.exe MediaPorter-*-portable.zip `
+
+          # PowerShell does not expand wildcards in arguments to native commands,
+          # so gh would receive the literal "MediaPorter-*-setup.exe" and fail.
+          $assets = @(Get-ChildItem MediaPorter-*-setup.exe, MediaPorter-*-portable.zip |
+                      ForEach-Object { $_.FullName })
+          if ($assets.Count -lt 2) { throw "expected 2 assets, found $($assets.Count)" }
+          $assets | ForEach-Object { "  attaching $_" }
+
+          gh release create "v${{ steps.v.outputs.version }}" @assets `
             --title "Media Porter ${{ steps.v.outputs.version }}" `
             --notes-file notes.md
