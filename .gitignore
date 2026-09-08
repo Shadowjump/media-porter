@@ -1,0 +1,19 @@
+# Tool binaries. ffmpeg.exe alone is ~97 MB and GitHub's hard limit is 100 MB
+# per file, so these are never committed. The app fetches them itself on first
+# run: Settings -> Copy tools into this folder.
+bin/
+
+# Build output. Run source\build.bat - it needs nothing but Windows.
+*.exe
+*.exe.config
+*.pdb
+
+# Per-machine state: settings point at local folders, the log is local noise.
+data/
+
+# Windows / editor noise
+Thumbs.db
+desktop.ini
+*.user
+*.suo
+.vs/
