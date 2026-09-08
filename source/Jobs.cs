@@ -444,7 +444,7 @@ namespace MediaPorter
             string ffmpeg = Tools.FFmpeg;
             if (ffmpeg == null) throw new FileNotFoundException("ffmpeg.exe not found.");
 
-            string temp = Path.Combine(Path.GetTempPath(), "iPodSuite_norm_" + Guid.NewGuid().ToString("N").Substring(0, 6) + ".m4a");
+            string temp = Path.Combine(Path.GetTempPath(), "MediaPorter_norm_" + Guid.NewGuid().ToString("N").Substring(0, 6) + ".m4a");
 
             // Pass 1 - measure
             sink.Stage("Analysing " + Path.GetFileName(file));

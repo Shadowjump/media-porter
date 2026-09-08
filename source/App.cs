@@ -358,6 +358,7 @@ namespace MediaPorter
         readonly List<string> _log = new List<string>();
         List<FileInfo> _libFiles = new List<FileInfo>();
         List<ITunesSync.DeviceTrack> _deviceTracks;
+        int _libRequest;
         bool _loadingSettings;
 
         // ---- named elements -------------------------------------------------
@@ -818,11 +819,13 @@ namespace MediaPorter
                                               "Download them now", "Not now", false, out ignored);
 
             if (choice == NoticeResult.Primary)
+            {
                 RunMaintenance("Fetching yt-dlp and ffmpeg", sink => Maintenance.MakePortable(App.Cfg, sink));
-            else
-                AppendLog("Skipped. Settings > Copy tools into this folder will fetch them whenever you want.");
+                return true;   // a job is starting; do not stack a second modal on it
+            }
 
-            return true;
+            AppendLog("Skipped. Settings > Copy tools into this folder will fetch them whenever you want.");
+            return false;      // nothing running, so the device check may still speak up
         }
 
         /// <summary>Explains what is missing before anything is attempted. Downloading
@@ -1112,6 +1115,11 @@ namespace MediaPorter
 
             bool wantVideo = CmbLibScope.SelectedIndex == 1;
 
+            // Reading the device takes a moment. If the scope is changed again
+            // while that is in flight, the slower reply must not overwrite the
+            // newer one - the list would then disagree with the dropdown.
+            int request = ++_libRequest;
+
             var t = new Thread(() =>
             {
                 List<ITunesSync.DeviceTrack> tracks = null;
@@ -1121,6 +1129,8 @@ namespace MediaPorter
 
                 Window.Dispatcher.BeginInvoke((Action)(() =>
                 {
+                    if (request != _libRequest) return;   // superseded
+
                     if (error != null)
                     {
                         _deviceTracks = null;

@@ -267,8 +267,12 @@ namespace MediaPorter
             catch { }
         }
 
+        static readonly object SaveLock = new object();
+
         public void Save()
         {
+          lock (SaveLock)
+          {
             try
             {
                 var d = new Dictionary<string, object>();
@@ -290,9 +294,17 @@ namespace MediaPorter
                 d["musicIncomingOverride"] = MusicIncomingOverride;
                 d["videoIncomingOverride"] = VideoIncomingOverride;
                 Directory.CreateDirectory(AppPaths.DataDir);
-                File.WriteAllText(AppPaths.ConfigFile, Json.Write(d), new UTF8Encoding(false));
+
+                // Write beside the target, then swap: an interrupted write leaves
+                // the previous config intact rather than a truncated one.
+                string tmp = AppPaths.ConfigFile + ".tmp";
+                File.WriteAllText(tmp, Json.Write(d), new UTF8Encoding(false));
+                File.Copy(tmp, AppPaths.ConfigFile, true);
+                try { File.Delete(tmp); }
+                catch { }
             }
             catch { }
+          }
         }
     }
 

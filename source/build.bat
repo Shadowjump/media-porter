@@ -28,6 +28,11 @@ if not exist "%FW%\csc.exe" (
 
 set "WPF=%FW%\WPF"
 
+rem Explorer shows the generic exe icon unless one is embedded at compile
+rem time; the runtime-drawn window icon does not help the file itself.
+set "ICON="
+if exist "%APPDIR%\ui\app.ico" set ICON=/win32icon:"%APPDIR%\ui\app.ico"
+
 echo.
 echo  Compiling MediaPorter
 echo    compiler : %FW%\csc.exe
@@ -37,6 +42,7 @@ echo.
 "%FW%\csc.exe" /nologo /nowarn:1701,1702 /target:winexe /platform:anycpu /optimize+ ^
   /out:"%OUT%" ^
   /win32manifest:"%SRC%\app.manifest" ^
+  %ICON% ^
   /reference:"%FW%\System.dll" ^
   /reference:"%FW%\System.Core.dll" ^
   /reference:"%FW%\System.Xml.dll" ^

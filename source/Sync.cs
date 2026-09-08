@@ -489,24 +489,13 @@ namespace MediaPorter
                     sink.Progress((index - 1) * 100.0 / files.Count);
                     sink.Log("-> " + file.Name);
 
-                    string dest = Util.UniquePath(Path.Combine(syncedRoot, file.Name));
-                    try
-                    {
-                        File.Move(file.FullName, dest);
-                    }
-                    catch (Exception ex)
-                    {
-                        sink.Log("   could not move into Synced: " + ex.Message);
-                        failed++;
-                        continue;
-                    }
-
+                    string source = file.FullName;
                     bool success = false;
                     try
                     {
                         int before = Com.Int(Com.Prop(playlist, "Tracks"), "Count");
 
-                        object status = Com.Call(playlist, "AddFile", dest);
+                        object status = Com.Call(playlist, "AddFile", source);
                         WaitFor(status, sink);
                         Thread.Sleep(400);
 
@@ -520,7 +509,7 @@ namespace MediaPorter
                             // Fallback: import into the PC library, then push the track across
                             sink.Log("   direct transfer refused, going through the iTunes library...");
                             object libPl = Com.Prop(itunes, "LibraryPlaylist");
-                            object st2 = Com.Call(libPl, "AddFile", dest);
+                            object st2 = Com.Call(libPl, "AddFile", source);
                             WaitFor(st2, sink);
 
                             object tracks = st2 == null ? null : Com.Prop(st2, "Tracks");
@@ -557,14 +546,23 @@ namespace MediaPorter
 
                     if (success)
                     {
+                        // Only now is it safe to call this one synced.
+                        try
+                        {
+                            string dest = Util.UniquePath(Path.Combine(syncedRoot, file.Name));
+                            File.Move(source, dest);
+                        }
+                        catch (Exception ex)
+                        {
+                            sink.Log("   on the iPod, but could not be archived: " + ex.Message);
+                        }
                         ok++;
                         sink.Log("   done.");
                     }
                     else
                     {
                         failed++;
-                        try { File.Move(dest, file.FullName); sink.Log("   failed - moved back to Incoming."); }
-                        catch { sink.Log("   failed - the file is in " + syncedRoot); }
+                        sink.Log("   failed - left in Incoming to try again.");
                     }
                 }
 
