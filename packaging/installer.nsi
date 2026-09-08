@@ -25,7 +25,7 @@ SetCompressor /SOLID lzma
 !define UNINSTKEY     "Software\Microsoft\Windows\CurrentVersion\Uninstall\MediaPorter"
 
 Name "${APPNAME} ${VERSION}"
-OutFile "MediaPorter-${VERSION}-setup.exe"
+OutFile "${ROOT}\MediaPorter-${VERSION}-setup.exe"
 InstallDir "$PROGRAMFILES64\${APPNAME}"
 InstallDirRegKey HKLM "Software\${COMPANY}\MediaPorter" "InstallDir"
 RequestExecutionLevel admin

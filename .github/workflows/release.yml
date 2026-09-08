@@ -87,6 +87,9 @@ jobs:
           $nsis = 'C:\Program Files (x86)\NSIS\makensis.exe'
           & $nsis "/DVERSION=${{ steps.v.outputs.version }}" "/DROOT=$PWD" packaging\installer.nsi
           if ($LASTEXITCODE -ne 0) { throw 'makensis failed' }
+          $setup = "MediaPorter-${{ steps.v.outputs.version }}-setup.exe"
+          if (-not (Test-Path $setup)) { throw "installer not found at repo root: $setup" }
+          "  $setup  $((Get-Item $setup).Length) bytes"
 
       - name: Build the portable zip
         shell: pwsh
