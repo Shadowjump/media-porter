@@ -1,0 +1,137 @@
+name: Build and release
+
+# Push a tag like v1.0.0 and this builds the app, the installer and the portable
+# zip on a clean runner, then publishes them. Building here rather than on a
+# developer's machine means the binaries are reproducible from the tagged source.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (no v prefix), e.g. 1.0.0'
+        required: true
+        default: '0.0.0-test'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the version
+        id: v
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $v = $env:GITHUB_REF -replace '^refs/tags/v', ''
+          } else {
+            $v = '${{ github.event.inputs.version }}'
+          }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "Building $v"
+
+      # The C# compiler that ships inside Windows. No SDK, no toolchain install:
+      # the same compiler the app uses for its own "rebuild from source".
+      - name: Compile
+        shell: cmd
+        run: call source\build.bat
+
+      - name: Check it produced an exe
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'MediaPorter.exe')) { throw 'build produced no exe' }
+          $s = (Get-Item 'MediaPorter.exe').Length
+          "MediaPorter.exe  $s bytes"
+          if ($s -lt 50000) { throw 'exe looks truncated' }
+
+      # Every XAML file is loaded at runtime, so a parse error would only show up
+      # when a user opens that screen. Parse them all here instead.
+      - name: Verify the XAML parses
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
+          $bad = 0
+          foreach ($f in Get-ChildItem ui\*.xaml) {
+            try {
+              $s = [IO.File]::OpenRead($f.FullName)
+              [Windows.Markup.XamlReader]::Load($s) | Out-Null
+              $s.Close()
+              "  OK   $($f.Name)"
+            } catch {
+              "  FAIL $($f.Name): $($_.Exception.Message)"
+              $bad++
+            }
+          }
+          if ($bad -gt 0) { throw "$bad XAML file(s) failed to parse" }
+
+      - name: Check the device table is valid JSON
+        shell: pwsh
+        run: |
+          $d = (Get-Content ui\devices.json -Raw | ConvertFrom-Json).devices
+          $video = @($d | Where-Object { $_.video -ne $false })
+          "  $($d.Count) devices, $($video.Count) video-capable"
+          if ($d.Count -lt 20) { throw 'device table looks truncated' }
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis --no-progress -y
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $nsis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          & $nsis "/DVERSION=${{ steps.v.outputs.version }}" "/DROOT=$PWD" packaging\installer.nsi
+          if ($LASTEXITCODE -ne 0) { throw 'makensis failed' }
+
+      - name: Build the portable zip
+        shell: pwsh
+        run: |
+          $stage = 'stage'
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item 'MediaPorter.exe','MediaPorter.exe.config','LICENSE','README.md' $stage
+          Copy-Item 'ui' $stage -Recurse
+          Copy-Item 'source' $stage -Recurse
+          Compress-Archive -Path "$stage\*" -DestinationPath "MediaPorter-${{ steps.v.outputs.version }}-portable.zip"
+
+      - name: Checksums
+        id: sums
+        shell: pwsh
+        run: |
+          $lines = @()
+          foreach ($f in Get-ChildItem MediaPorter-*-setup.exe, MediaPorter-*-portable.zip) {
+            $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
+            "  $($f.Name)  $h"
+            $lines += "$($f.Name.PadRight(34))  $h"
+          }
+          $body = $lines -join "`n"
+          "sha<<EOF"  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $body       | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "EOF"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MediaPorter-${{ steps.v.outputs.version }}
+          path: |
+            MediaPorter-*-setup.exe
+            MediaPorter-*-portable.zip
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = Get-Content packaging\release-notes.md -Raw
+          $notes = $notes -replace '<!--CHECKSUMS-->', @'
+${{ steps.sums.outputs.sha }}
+'@
+          $notes | Out-File -FilePath notes.md -Encoding utf8
+          gh release create "v${{ steps.v.outputs.version }}" `
+            MediaPorter-*-setup.exe MediaPorter-*-portable.zip `
+            --title "Media Porter ${{ steps.v.outputs.version }}" `
+            --notes-file notes.md
