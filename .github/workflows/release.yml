@@ -139,6 +139,20 @@ jobs:
           if ($assets.Count -lt 2) { throw "expected 2 assets, found $($assets.Count)" }
           $assets | ForEach-Object { "  attaching $_" }
 
-          gh release create "v${{ steps.v.outputs.version }}" @assets `
-            --title "Media Porter ${{ steps.v.outputs.version }}" `
-            --notes-file notes.md
+          # Re-running a tag must not fail. If the release already exists, replace
+          # its assets and notes rather than erroring out.
+          $tag = "v${{ steps.v.outputs.version }}"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            "  release $tag exists - updating it"
+            gh release upload $tag @assets --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'asset upload failed' }
+            gh release edit $tag --notes-file notes.md
+            if ($LASTEXITCODE -ne 0) { throw 'notes update failed' }
+          } else {
+            "  creating release $tag"
+            gh release create $tag @assets `
+              --title "Media Porter ${{ steps.v.outputs.version }}" `
+              --notes-file notes.md
+            if ($LASTEXITCODE -ne 0) { throw 'release creation failed' }
+          }
