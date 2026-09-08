@@ -34,13 +34,35 @@ namespace MediaPorter
             sink.Progress(100);
         }
 
+        /// <summary>Turns raw byte counts into a stage line and a moving bar. The stage
+        /// text is only refreshed about twice a second - rewriting it on every 80 KB
+        /// chunk would flood the UI thread for no visible benefit.</summary>
+        static Action<long, long> Reporter(IJobSink sink, string what)
+        {
+            var last = new DateTime[1];
+            return (got, total) =>
+            {
+                if (total > 0) sink.Progress(got * 100.0 / total);
+                else sink.Progress(-1);
+
+                DateTime now = DateTime.UtcNow;
+                if ((now - last[0]).TotalMilliseconds < 500) return;
+                last[0] = now;
+
+                sink.Stage(total > 0
+                    ? "Downloading " + what + "  " + Util.HumanSize(got) + " of " + Util.HumanSize(total)
+                    : "Downloading " + what + "  " + Util.HumanSize(got));
+            };
+        }
+
         public static void DownloadYtDlp(string targetDir, IJobSink sink)
         {
             Directory.CreateDirectory(targetDir);
             string dest = Path.Combine(targetDir, "yt-dlp.exe");
             string tmp = dest + ".new";
+            sink.Stage("Downloading yt-dlp");
             sink.Log("Downloading the latest yt-dlp from GitHub...");
-            Util.Download(YtDlpLatest, tmp, 120000);
+            Util.Download(YtDlpLatest, tmp, 120000, Reporter(sink, "yt-dlp"));
             if (new FileInfo(tmp).Length < 1024 * 1024) throw new Exception("Downloaded yt-dlp looks truncated.");
             Util.TryDelete(dest);
             File.Move(tmp, dest);
@@ -93,16 +115,17 @@ namespace MediaPorter
                 sink.Log("Fetching the latest ffmpeg build from GitHub...");
                 try
                 {
-                    Util.Download(FFmpegGitHub, zip, 600000);
+                    Util.Download(FFmpegGitHub, zip, 600000, Reporter(sink, "ffmpeg"));
                 }
                 catch (Exception ex)
                 {
                     sink.Log("GitHub download failed (" + ex.Message + ") - trying the gyan.dev mirror...");
                     Util.TryDelete(zip);
-                    Util.Download(FFmpegMirror, zip, 600000);
+                    Util.Download(FFmpegMirror, zip, 600000, Reporter(sink, "ffmpeg"));
                 }
 
-                sink.Stage("Extracting");
+                sink.Stage("Unpacking ffmpeg");
+                sink.Progress(-1);
                 Directory.CreateDirectory(extract);
                 ZipFile.ExtractToDirectory(zip, extract);
 
@@ -155,13 +178,13 @@ namespace MediaPorter
 
             if (Tools.Find("yt-dlp.exe") == null)
             {
-                sink.Log("yt-dlp is missing - downloading it...");
+                sink.Log("yt-dlp is missing - fetching it (about 17 MB)...");
                 DownloadYtDlp(AppPaths.BinDir, sink);
                 n++;
             }
             if (Tools.Find("ffmpeg.exe") == null)
             {
-                sink.Log("ffmpeg is missing - downloading it...");
+                sink.Log("ffmpeg is missing - fetching it (about 100 MB, this is the slow one)...");
                 UpdateFFmpeg(sink);
                 n++;
             }
@@ -176,7 +199,11 @@ namespace MediaPorter
         // -----------------------------------------------------------------
         public static bool CanRebuild()
         {
-            return File.Exists(CscPath()) && File.Exists(Path.Combine(AppPaths.SourceDir, "build.bat"));
+            // Replacing the running exe means writing into its own folder, which a
+            // Program Files install will not allow without elevation.
+            return AppPaths.AppDirWritable
+                && File.Exists(CscPath())
+                && File.Exists(Path.Combine(AppPaths.SourceDir, "build.bat"));
         }
 
         public static string CscPath()

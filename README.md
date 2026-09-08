@@ -85,23 +85,40 @@ ladder falls through to the CPU, so the worst case is a slower encode.
 ## Getting started
 
 **Requirements:** Windows 10 or 11. That's it to download and convert — .NET
-Framework 4.8 is already part of Windows. iTunes is needed only to copy onto a
-device.
+Framework 4.8 is already part of Windows, so there is no runtime to install.
+iTunes is needed only to copy onto a device.
 
-1. Clone or download this repo.
-2. Double-click **`source\build.bat`**. It compiles with the C# compiler that
-   ships inside Windows, so there is nothing to install — no SDK, no Visual
-   Studio, no internet. `MediaPorter.exe` appears in the repo root.
-3. Run it. On first launch open **Settings → Copy tools into this folder** to
-   fetch `yt-dlp` and `ffmpeg` (they are not committed here — ffmpeg alone is
-   ~97 MB, over GitHub's per-file limit).
-4. Pick your device from the chip on the Video page.
+Grab either one from [Releases](../../releases):
+
+- **`MediaPorter-setup.exe`** — installs to `C:\Program Files\Media Porter`,
+  asks for administrator permission once, adds a Start Menu entry and an
+  uninstaller. Settings go to `%LOCALAPPDATA%\MediaPorter`; your media library
+  defaults to `%USERPROFILE%\MediaPorter`.
+- **`MediaPorter-portable.zip`** — unzip and run. Everything, including settings
+  and the downloaded tools, stays in that one folder. Good for a USB stick.
+
+**On first launch it asks to fetch two tools** — `yt-dlp` and `ffmpeg` — with a
+progress bar for each. One click, straight from their GitHub releases, about
+115 MB once. Nothing else to configure. Then pick your device from the chip on
+the Video page and paste a link.
+
+Windows will show a **SmartScreen warning** the first time ("Windows protected
+your PC"). That is what an unsigned download from a small project looks like;
+click *More info → Run anyway*, or use the portable zip. Signing would need a
+code-signing certificate.
+
+### Building it yourself
+
+Double-click **`source\build.bat`**. It compiles with the C# compiler that ships
+inside Windows — no SDK, no Visual Studio, no internet. `MediaPorter.exe` appears
+next to the `ui` folder.
 
 ---
 
 ## Portable, and self-updating
 
-Everything lives in one folder. Copy it to a USB stick or another PC and it runs:
+A portable copy keeps everything in one folder. Copy it to a USB stick or
+another PC and it runs:
 
 ```
 MediaPorter.exe          the app
@@ -112,6 +129,12 @@ bin/                     yt-dlp.exe, ffmpeg.exe   (fetched on first run)
 data/config.json         your settings            (written on first run)
 source/                  C# source + build.bat
 ```
+
+An installed copy works the same way but cannot write into Program Files, so
+`bin/` and `data/` move to `%LOCALAPPDATA%\MediaPorter` instead. That decision is
+made by checking the install path, not by trying to write — otherwise running it
+as administrator once would strand your settings somewhere the normal launch
+cannot see, and the app would appear to forget everything.
 
 - **yt-dlp** is checked against GitHub once a day and offered when a newer release
   exists. This is the fix whenever YouTube changes something and downloads break.

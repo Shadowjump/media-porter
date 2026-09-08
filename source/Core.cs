@@ -18,9 +18,84 @@ namespace MediaPorter
     {
         public static string AppDir { get; private set; }
         public static string UiDir { get { return Path.Combine(AppDir, "ui"); } }
-        public static string BinDir { get { return Path.Combine(AppDir, "bin"); } }
-        public static string DataDir { get { return Path.Combine(AppDir, "data"); } }
         public static string SourceDir { get { return Path.Combine(AppDir, "source"); } }
+
+        // Written to at runtime, so these follow WritableRoot rather than the exe.
+        public static string BinDir { get { return Path.Combine(WritableRoot, "bin"); } }
+        public static string DataDir { get { return Path.Combine(WritableRoot, "data"); } }
+
+        static string _writableRoot;
+
+        /// <summary>Where the app is allowed to write.
+        ///
+        /// A portable copy keeps everything in its own folder - settings, and the
+        /// ~114 MB of ffmpeg/yt-dlp it downloads. Installed under Program Files that
+        /// folder is read-only for a standard user, and 64-bit processes get no UAC
+        /// file virtualisation to paper over it, so writes would simply fail. In that
+        /// case everything writable moves to %LOCALAPPDATA%\MediaPorter instead.</summary>
+        public static string WritableRoot
+        {
+            get
+            {
+                if (_writableRoot != null) return _writableRoot;
+
+                // Two separate reasons to move out of the app folder:
+                //  - it sits under Program Files, i.e. an installed copy. Checked by
+                //    path, not by trying to write: run once as administrator and the
+                //    write would succeed, leaving settings stranded in a place the
+                //    normal, unelevated launch cannot reach. State would silently
+                //    split in two depending on how it was started.
+                //  - it genuinely is not writable (read-only media, locked-down share).
+                _writableRoot = (UnderProgramFiles(AppDir) || !CanWrite(AppDir))
+                    ? Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "MediaPorter")
+                    : AppDir;
+
+                try { Directory.CreateDirectory(_writableRoot); }
+                catch { }
+                return _writableRoot;
+            }
+        }
+
+        /// <summary>False when the app sits in a folder it cannot write to, i.e. a
+        /// normal Program Files install rather than a portable copy.</summary>
+        public static bool AppDirWritable
+        {
+            get { return string.Equals(WritableRoot, AppDir, StringComparison.OrdinalIgnoreCase); }
+        }
+
+        static bool UnderProgramFiles(string dir)
+        {
+            foreach (Environment.SpecialFolder f in new[] {
+                         Environment.SpecialFolder.ProgramFiles,
+                         Environment.SpecialFolder.ProgramFilesX86 })
+            {
+                try
+                {
+                    string root = Environment.GetFolderPath(f);
+                    if (string.IsNullOrEmpty(root)) continue;
+                    string a = Path.GetFullPath(dir).TrimEnd('\\', '/') + "\\";
+                    string b = Path.GetFullPath(root).TrimEnd('\\', '/') + "\\";
+                    if (a.StartsWith(b, StringComparison.OrdinalIgnoreCase)) return true;
+                }
+                catch { }
+            }
+            return false;
+        }
+
+        static bool CanWrite(string dir)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return false;
+                string probe = Path.Combine(dir, ".write-probe-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+                File.WriteAllText(probe, "x");
+                File.Delete(probe);
+                return true;
+            }
+            catch { return false; }
+        }
         public static string ConfigFile { get { return Path.Combine(DataDir, "config.json"); } }
         public static string LogFile { get { return Path.Combine(DataDir, "app.log"); } }
 
@@ -50,8 +125,15 @@ namespace MediaPorter
                 Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "MediaPorter");
             if (LooksLikeSuite(desktop)) return desktop;
 
-            // 3. Self-contained: keep the whole library inside APP\Library
-            return Path.Combine(AppDir, "Library");
+            // 3. Nothing found. A portable copy keeps the library with it; an
+            //    installed copy cannot (Program Files), and burying gigabytes of
+            //    media in AppData would be worse - so it goes somewhere visible
+            //    in the user's own profile. Changeable in Settings either way.
+            return AppDirWritable
+                ? Path.Combine(AppDir, "Library")
+                : Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    "MediaPorter");
         }
 
         public static bool LooksLikeSuite(string dir)
@@ -548,7 +630,11 @@ namespace MediaPorter
                 return sr.ReadToEnd();
         }
 
-        public static void Download(string url, string destFile, int timeoutMs = 30000)
+        /// <summary>Downloads a file, reporting bytes as they arrive.
+        /// onProgress receives (bytesSoFar, totalBytes); totalBytes is -1 when the
+        /// server does not send a Content-Length.</summary>
+        public static void Download(string url, string destFile, int timeoutMs = 30000,
+                                    Action<long, long> onProgress = null)
         {
             try
             {
@@ -559,10 +645,24 @@ namespace MediaPorter
             req.UserAgent = "MediaPorter/2.0";
             req.Timeout = timeoutMs;
             req.ReadWriteTimeout = timeoutMs;
+
             using (var resp = (HttpWebResponse)req.GetResponse())
             using (var src = resp.GetResponseStream())
             using (var dst = File.Create(destFile))
-                src.CopyTo(dst);
+            {
+                long total = resp.ContentLength;
+                if (onProgress == null) { src.CopyTo(dst); return; }
+
+                var buffer = new byte[81920];
+                long got = 0;
+                int n;
+                while ((n = src.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    dst.Write(buffer, 0, n);
+                    got += n;
+                    onProgress(got, total);
+                }
+            }
         }
 
         public static void TryDelete(string path)

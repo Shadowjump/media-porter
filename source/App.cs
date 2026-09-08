@@ -406,9 +406,10 @@ namespace MediaPorter
                 RefreshCounts();
                 RefreshLibrary();
                 RefreshTools();
-                CheckDevice(false, true);
+                bool askedAboutTools = OfferToolDownload();
+                CheckDevice(false, !askedAboutTools);
                 AppendLog("MediaPorter ready. Library: " + App.Cfg.SuiteRoot);
-                CheckForToolUpdates();
+                if (!askedAboutTools) CheckForToolUpdates();
             };
 
             Window.Closing += (s, e) => App.Cfg.Save();
@@ -787,6 +788,41 @@ namespace MediaPorter
                 AppendLog("Asked iTunes to start. Give it a few seconds, then hit Refresh.");
             };
             F<Button>("BtnDeviceRefresh").Click += (s, e) => CheckDevice(true);
+        }
+
+        /// <summary>First run on a new machine has no yt-dlp or ffmpeg, and nothing
+        /// works without them. Rather than letting the first download fail with a
+        /// "tool not found", offer to fetch them straight away. Returns true if the
+        /// question was asked, so the device check does not stack a second modal.</summary>
+        bool OfferToolDownload()
+        {
+            bool haveYtDlp = Tools.YtDlp != null;
+            bool haveFfmpeg = Tools.FFmpeg != null;
+            if (haveYtDlp && haveFfmpeg) return false;
+
+            string missing = !haveYtDlp && !haveFfmpeg
+                ? "yt-dlp and ffmpeg are"
+                : (!haveYtDlp ? "yt-dlp is" : "ffmpeg is");
+
+            string body =
+                missing + " not here yet. They do the actual downloading and encoding, " +
+                "and nothing works without them.\n\n" +
+                "They are not bundled with this app - ffmpeg alone is about 100 MB, and it " +
+                "carries its own licence. Fetching them yourself keeps that between you and " +
+                "the people who make them.\n\n" +
+                "Downloaded straight from the yt-dlp and FFmpeg-Builds releases on GitHub, " +
+                "into this app's own folder. Roughly 115 MB, once.";
+
+            bool ignored;
+            NoticeResult choice = Notice.Show(Window, "Two tools are missing", body,
+                                              "Download them now", "Not now", false, out ignored);
+
+            if (choice == NoticeResult.Primary)
+                RunMaintenance("Fetching yt-dlp and ffmpeg", sink => Maintenance.MakePortable(App.Cfg, sink));
+            else
+                AppendLog("Skipped. Settings > Copy tools into this folder will fetch them whenever you want.");
+
+            return true;
         }
 
         /// <summary>Explains what is missing before anything is attempted. Downloading
@@ -1252,11 +1288,17 @@ namespace MediaPorter
 
 
                 var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+                string where = "running from " + AppPaths.AppDir;
+                if (!AppPaths.AppDirWritable)
+                    where += "  ·  installed, so settings and tools live in " + AppPaths.WritableRoot;
+
                 AboutText.Text = "MediaPorter " + ver.Major + "." + ver.Minor +
-                                 "  ·  running from " + AppPaths.AppDir +
+                                 "  ·  " + where +
                                  "  ·  " + (Maintenance.CanRebuild()
                                     ? "the source is here, so this PC can rebuild the app"
-                                    : "source or compiler missing - rebuilding is not available here");
+                                    : !AppPaths.AppDirWritable
+                                        ? "rebuilding needs a portable copy - this folder is read-only"
+                                        : "source or compiler missing - rebuilding is not available here");
 
                 TitleHint.Text = App.Cfg.SuiteRoot;
 
