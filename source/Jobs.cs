@@ -64,7 +64,7 @@ namespace MediaPorter
                 sink.Stage("Reading track info");
                 sink.Progress(-1);
 
-                var info = ProbeTrack(ytdlp, url, sink);
+                var info = ProbeTrack(ytdlp, url, sink, tempDir);
                 sink.Log("YouTube: " + info.Artist + " - " + info.Title);
 
                 // ---- 2. Enrich from iTunes / MusicBrainz ---------------------
@@ -85,7 +85,7 @@ namespace MediaPorter
 
                 string tempAudio = Path.Combine(tempDir, "audio.m4a");
                 string dlArgs = YtFlags() +
-                    "--no-playlist --extractor-args \"youtube:player_client=android,web\" --newline -N 8 -f ba --extract-audio --audio-format m4a " +
+                    "--no-playlist --extractor-args \"youtube:player_client=android,web\" --newline -N 8 -f \"ba/best\" --extract-audio --audio-format m4a " +
                     "--write-thumbnail --convert-thumbnails jpg --ffmpeg-location " + Q(Path.GetDirectoryName(ffmpeg)) +
                     " -o " + Q(tempAudio) + " " + Q(url);
 
@@ -169,7 +169,7 @@ namespace MediaPorter
             {
                 sink.Stage("Reading video info");
                 sink.Progress(-1);
-                var info = ProbeTrack(ytdlp, url, sink);
+                var info = ProbeTrack(ytdlp, url, sink, tempDir);
 
                 string name = Util.SafeFileName(Util.Clean(Util.StripJunk(info.Source)));
                 if (string.IsNullOrWhiteSpace(name) || name == "untitled")
@@ -539,35 +539,42 @@ namespace MediaPorter
             }, sink.Token);
         }
 
-        public static TrackInfo ProbeTrack(string ytdlp, string url, IJobSink sink)
+        public static TrackInfo ProbeTrack(string ytdlp, string url, IJobSink sink, string tempDir)
         {
             var info = new TrackInfo();
-            string sep = ";;;";
-            string args = YtFlags() + "--no-playlist --extractor-args \"youtube:player_client=android,web\" " +
-                          "--print \"%(title)s" + sep + "%(artist)s" + sep + "%(track)s" + sep +
-                          "%(uploader)s" + sep + "%(duration)s" + sep + "%(fps)s\" " + Q(url);
 
-            string raw = "";
-            Proc.Run(ytdlp, args, null, line =>
+            // yt-dlp's console output is re-encoded to the system ANSI codepage and
+            // silently drops anything that codepage can't represent (Cyrillic, CJK,
+            // etc. all vanish from a --print'd title). --write-info-json is written
+            // as real UTF-8 regardless, so metadata is read back from that file
+            // instead of parsed off stdout.
+            string probeBase = Path.Combine(tempDir, "probe");
+            string args = YtFlags() + "--no-playlist --extractor-args \"youtube:player_client=android,web\" " +
+                          "--skip-download --write-info-json -o " + Q(probeBase) + " " + Q(url);
+
+            Proc.Run(ytdlp, args, tempDir, line =>
             {
-                if (line.Contains(sep) && raw.Length == 0) raw = line;
-                else if (line.StartsWith("ERROR")) sink.Log(line);
+                if (line.StartsWith("ERROR")) sink.Log(line);
             }, sink.Token);
 
-            if (string.IsNullOrWhiteSpace(raw))
+            var found = Directory.GetFiles(tempDir, "probe*.info.json");
+            object root = null;
+            if (found.Length > 0)
+            {
+                try { root = Json.Parse(File.ReadAllText(found[0], Encoding.UTF8)); }
+                catch { }
+                try { File.Delete(found[0]); } catch { }
+            }
+
+            if (root == null)
                 throw new Exception("Could not read video info. The link may be private, region locked, or yt-dlp needs updating (Settings > Update tools).");
 
-            string[] p = Regex.Split(raw, sep);
-            string rawTitle = Field(p, 0, "downloaded_track");
-            string ytArtist = Field(p, 1, "");
-            string ytTrack = Field(p, 2, "");
-            string uploader = Field(p, 3, "");
-            double dur;
-            if (p.Length > 4 && double.TryParse(Field(p, 4, "0"), NumberStyles.Any, CultureInfo.InvariantCulture, out dur))
-                info.Duration = dur;
-            double fps;
-            if (p.Length > 5 && double.TryParse(Field(p, 5, "0"), NumberStyles.Any, CultureInfo.InvariantCulture, out fps))
-                info.Fps = fps;
+            string rawTitle = Json.Str(root, "title", "downloaded_track");
+            string ytArtist = Json.Str(root, "artist");
+            string ytTrack = Json.Str(root, "track");
+            string uploader = Json.Str(root, "uploader");
+            info.Duration = Json.Num(root, "duration", 0);
+            info.Fps = Json.Num(root, "fps", 0);
 
             info.Source = rawTitle;                       // untouched title, used for video filenames
             string clean = Util.StripJunk(rawTitle);
@@ -597,14 +604,6 @@ namespace MediaPorter
             info.Artist = Fallback(Util.Clean(info.Artist), "Unknown Artist");
             info.Title = Fallback(Util.Clean(info.Title), "downloaded_track");
             return info;
-        }
-
-        static string Field(string[] parts, int i, string fallback)
-        {
-            if (parts == null || i >= parts.Length) return fallback;
-            string s = (parts[i] ?? "").Trim();
-            if (s.Length == 0 || s == "NA" || s == "None") return fallback;
-            return s;
         }
 
         /// <summary>iTunes Search API first, MusicBrainz + Cover Art Archive as fallback.</summary>
