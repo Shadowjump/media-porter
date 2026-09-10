@@ -85,7 +85,7 @@ namespace MediaPorter
 
                 string tempAudio = Path.Combine(tempDir, "audio.m4a");
                 string dlArgs = YtFlags() +
-                    "--no-playlist --newline -N 8 -f ba --extract-audio --audio-format m4a " +
+                    "--no-playlist --extractor-args \"youtube:player_client=android,web\" --newline -N 8 -f ba --extract-audio --audio-format m4a " +
                     "--write-thumbnail --convert-thumbnails jpg --ffmpeg-location " + Q(Path.GetDirectoryName(ffmpeg)) +
                     " -o " + Q(tempAudio) + " " + Q(url);
 
@@ -182,7 +182,7 @@ namespace MediaPorter
 
                 string tempVideo = Path.Combine(tempDir, "raw.mp4");
                 string dlArgs = YtFlags() +
-                    "--no-playlist --newline -N 8 -f \"bestvideo+bestaudio/best\" --merge-output-format mp4 " +
+                    "--no-playlist --extractor-args \"youtube:player_client=android,web\" --newline -N 8 -f \"bestvideo+bestaudio/best\" --merge-output-format mp4 " +
                     "--ffmpeg-location " + Q(Path.GetDirectoryName(ffmpeg)) +
                     " -o " + Q(tempVideo) + " " + Q(url);
 
