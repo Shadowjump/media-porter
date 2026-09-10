@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Security.Principal;
 using System.Threading;
 
 namespace MediaPorter
@@ -54,6 +55,10 @@ namespace MediaPorter
         public string DeviceName = "";
         public int TrackCount;
         public string Message = "";
+
+        /// <summary>True when the real problem is this process running elevated, not
+        /// iTunes actually being missing - see IsElevated().</summary>
+        public bool BlockedByElevation;
     }
 
     public static class ITunesSync
@@ -64,6 +69,32 @@ namespace MediaPorter
         public static bool ITunesInstalled()
         {
             return Type.GetTypeFromProgID("iTunes.Application") != null;
+        }
+
+        /// <summary>True only when this process itself is running elevated (not merely
+        /// "the user is an admin" - UAC gives an admin account a filtered, non-elevated
+        /// token by default, and only a real "Run as administrator" launch flips this).
+        /// The Microsoft Store build of iTunes registers its COM automation per-user;
+        /// an elevated caller runs in a different security context and cannot reach it,
+        /// which otherwise looks exactly like "iTunes is not installed".</summary>
+        public static bool IsElevated()
+        {
+            try
+            {
+                using (var id = WindowsIdentity.GetCurrent())
+                    return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>Shared wording for the "!ITunesInstalled()" case, used everywhere that
+        /// check gates a COM call - correctly blames elevation instead of a missing iTunes
+        /// when that is the real cause.</summary>
+        static string NotInstalledMessage()
+        {
+            return IsElevated()
+                ? "This app is running as Administrator, which blocks it from reaching the Microsoft Store version of iTunes. Close it and reopen it normally - it never needs elevation."
+                : "iTunes is not installed on this PC.";
         }
 
         public static bool ITunesRunning()
@@ -100,7 +131,18 @@ namespace MediaPorter
             var st = new DeviceStatus();
             if (!ITunesInstalled())
             {
-                st.Message = "iTunes is not installed on this PC.";
+                if (IsElevated())
+                {
+                    st.BlockedByElevation = true;
+                    st.ITunesRunning = ITunesRunning();
+                    st.Message = st.ITunesRunning
+                        ? "iTunes is running, but this app can't reach it while running as Administrator - the Microsoft Store version of iTunes is walled off from elevated processes. Close this app and reopen it normally (not \"Run as administrator\")."
+                        : "This app is running as Administrator, which blocks it from reaching the Microsoft Store version of iTunes. Close it and reopen it normally - it never needs elevation.";
+                }
+                else
+                {
+                    st.Message = "iTunes is not installed on this PC.";
+                }
                 return st;
             }
 
@@ -194,7 +236,7 @@ namespace MediaPorter
         {
             var list = new List<DeviceTrack>();
             if (!ITunesInstalled())
-                throw new Exception("iTunes is not installed on this PC.");
+                throw new Exception(NotInstalledMessage());
             if (!ITunesRunning())
                 throw new Exception("iTunes is not running. Start it, plug the iPod in, then refresh.");
 
@@ -445,7 +487,9 @@ namespace MediaPorter
             sink.Progress(-1);
 
             if (!ITunesInstalled())
-                throw new Exception("iTunes is not installed. The sync step needs iTunes to talk to the iPod.");
+                throw new Exception(IsElevated()
+                    ? NotInstalledMessage()
+                    : "iTunes is not installed. The sync step needs iTunes to talk to the iPod.");
 
             object itunes = Activator.CreateInstance(Type.GetTypeFromProgID("iTunes.Application"));
             object ipod = null, playlist = null;

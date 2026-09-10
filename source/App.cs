@@ -833,7 +833,21 @@ namespace MediaPorter
         void ShowDeviceNotice(DeviceStatus st)
         {
             string body;
-            if (!ITunesSync.ITunesInstalled())
+            string primaryLabel = "Open iTunes";
+            if (!ITunesSync.ITunesInstalled() && ITunesSync.IsElevated())
+            {
+                body = (st.ITunesRunning
+                    ? "iTunes is running, but this app can't reach it while running as Administrator.\n\n"
+                    : "This app is running as Administrator.\n\n") +
+                    "The Microsoft Store version of iTunes registers itself per-user, and an elevated " +
+                    "process is walled off from that - which looks exactly like \"not installed\" even " +
+                    "though it is right there.\n\n" +
+                    "Close this app and reopen it normally (not \"Run as administrator\"). It never needs " +
+                    "elevation - settings and tools live in your own AppData folder.\n\n" +
+                    "Downloading and converting work regardless - only Send to iPod needs iTunes.";
+                primaryLabel = "OK";
+            }
+            else if (!ITunesSync.ITunesInstalled())
             {
                 body = "iTunes is not installed on this PC.\n\n" +
                        "Downloading and converting still work - everything lands in the Incoming " +
@@ -857,7 +871,7 @@ namespace MediaPorter
 
             bool dontAsk;
             NoticeResult choice = Notice.Show(Window, "No device connected", body,
-                                              "Open iTunes", "Continue anyway", true, out dontAsk);
+                                              primaryLabel, "Continue anyway", true, out dontAsk);
 
             if (dontAsk)
             {
@@ -968,6 +982,13 @@ namespace MediaPorter
                         DeviceDot.Fill = Brush("#34D399");
                         DeviceName.Text = st.DeviceName;
                         DeviceInfo.Text = st.TrackCount + " items on the device";
+                    }
+                    else if (st.BlockedByElevation)
+                    {
+                        DeviceDot.Fill = Brush("#F87171");
+                        DeviceName.Text = "Blocked (running as admin)";
+                        DeviceInfo.Text = st.Message;
+                        if (announceProblem && App.Cfg.WarnWhenDeviceMissing) ShowDeviceNotice(st);
                     }
                     else
                     {
